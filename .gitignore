@@ -1,0 +1,6 @@
+# runtime files the scripts create next to themselves
+*.log
+*.pid
+*.owned.flag
+mirror-target.txt
+covers/
