@@ -18,6 +18,27 @@ It does this with the Windows **DWM thumbnail API** — the same zero-copy, GPU-
 
 **Apollo Mirror Manager** is the friendly GUI on top: it health-checks and self-repairs the whole pipeline, and lets you add any Steam game (or any other program) to Moonlight in two clicks — cover art included.
 
+## ⚡ Quick start (the easy way)
+
+> First make sure **Apollo is installed** and a plain **"Desktop" stream already works** in Moonlight. This tool builds on top of that — see [Requirements](#requirements) below.
+
+**Option A — one-file installer (easiest, recommended for newbies):**
+
+1. Go to the [**Releases**](https://github.com/aguirretim/apollo-mirror-manager/releases/latest) page and download **`Apollo-Mirror-Manager-Setup.exe`**.
+2. **Double-click it.** (Windows SmartScreen may warn about an unknown publisher — click **More info → Run anyway**. The installer is unsigned; the source is all right here in this repo.)
+3. When it finishes, open **Apollo Mirror Manager** from your Desktop and add your games.
+
+That's it — no ZIP, no "Unblock", no right-clicking scripts.
+
+**Option B — download the ZIP:**
+
+1. Click the green **Code** button → **Download ZIP** → **Extract All**.
+2. Double-click **`START-HERE.cmd`**. It unblocks the files and installs everything for you.
+
+To remove it later, double-click **`UNINSTALL.cmd`** (or use the Releases installer's folder). Your games and Moonlight tiles are left alone.
+
+*Prefer to do it by hand and read every step?* See [Install (step by step, for newbies)](#install-step-by-step-for-newbies) further down.
+
 ## What's in the box
 
 | Piece | What it does |
@@ -28,6 +49,8 @@ It does this with the Windows **DWM thumbnail API** — the same zero-copy, GPU-
 | `launch-app.ps1` / `close-app.ps1` | Generic per-tile launch/close logic Apollo calls (idempotent launch, optional close-on-quit) |
 | `add-app.ps1` | Command-line way to register a tile (the GUI calls this for you) |
 | `install.ps1` / `uninstall.ps1` | One-shot setup / teardown |
+| `START-HERE.cmd` / `UNINSTALL.cmd` | Double-click-friendly wrappers that unblock the files and run install/uninstall for you |
+| `build/build-setup.ps1` | Builds the self-contained `Apollo-Mirror-Manager-Setup.exe` released on the Releases page |
 
 Everything is plain PowerShell + VBScript — no binaries to trust, read all of it yourself.
 

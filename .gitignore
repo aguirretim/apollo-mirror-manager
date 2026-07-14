@@ -4,3 +4,6 @@
 *.owned.flag
 mirror-target.txt
 covers/
+
+# build output (the Setup.exe is attached to GitHub Releases, not committed)
+dist/
