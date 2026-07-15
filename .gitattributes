@@ -1,0 +1,9 @@
+# Windows batch files MUST keep CRLF line endings or cmd.exe misbehaves
+# (a double-clicked .cmd with LF endings can fail to run). Treat them as
+# binary so git stores the exact bytes and never converts line endings.
+*.cmd -text
+*.bat -text
+
+# Keep other Windows script types CRLF on checkout too.
+*.ps1 text eol=crlf
+*.vbs text eol=crlf

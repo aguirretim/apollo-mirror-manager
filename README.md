@@ -39,6 +39,16 @@ To remove it later, double-click **`UNINSTALL.cmd`** (or use the Releases instal
 
 *Prefer to do it by hand and read every step?* See [Install (step by step, for newbies)](#install-step-by-step-for-newbies) further down.
 
+### ▶️ How to run the app after installing
+
+Any of these open it (they all launch the same app — pick whatever's easiest):
+
+- **Double-click `Apollo Mirror Manager` on your Desktop** — the installer put it there for you. *(Easiest.)*
+- **Double-click `RUN-APP.cmd`** in this folder.
+- Or find **Apollo Mirror Manager** in the Start menu search.
+
+The app asks for admin **once** (a UAC prompt) — that's expected, because Apollo's config lives in `Program Files`. Tip: right-click the Desktop icon → **Pin to taskbar** to keep it one click away.
+
 ## What's in the box
 
 | Piece | What it does |
@@ -50,6 +60,7 @@ To remove it later, double-click **`UNINSTALL.cmd`** (or use the Releases instal
 | `add-app.ps1` | Command-line way to register a tile (the GUI calls this for you) |
 | `install.ps1` / `uninstall.ps1` | One-shot setup / teardown |
 | `START-HERE.cmd` / `UNINSTALL.cmd` | Double-click-friendly wrappers that unblock the files and run install/uninstall for you |
+| `RUN-APP.cmd` | Double-click to open the app (same as the Desktop shortcut) |
 | `build/build-setup.ps1` | Builds the self-contained `Apollo-Mirror-Manager-Setup.exe` released on the Releases page |
 
 Everything is plain PowerShell + VBScript — no binaries to trust, read all of it yourself.
