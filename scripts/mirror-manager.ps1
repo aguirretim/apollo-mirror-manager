@@ -298,41 +298,50 @@ $tabSteam = New-Object System.Windows.Forms.TabPage
 $tabSteam.Text = 'Add Steam game'
 $tabs.TabPages.Add($tabSteam)
 
-$tabSteam.Controls.Add((New-Label 'Installed Steam games (games already on Moonlight are marked):' 20 15 600 20))
+$tabSteam.Padding = New-Object System.Windows.Forms.Padding(12, 10, 12, 8)
 
-$lvGames = New-Object System.Windows.Forms.ListView
-$lvGames.View = 'Details'; $lvGames.FullRowSelect = $true; $lvGames.MultiSelect = $true
-$lvGames.Location = New-Object System.Drawing.Point(20, 38)
-$lvGames.Size = New-Object System.Drawing.Size(715, 330)
-$lvGames.Anchor = 'Top,Left,Right,Bottom'
-[void]$lvGames.Columns.Add('Game', 420)
-[void]$lvGames.Columns.Add('AppId', 90)
-[void]$lvGames.Columns.Add('On Moonlight?', 150)
-$tabSteam.Controls.Add($lvGames)
+# --- action bar pinned to the BOTTOM so the Add button is always visible ---
+# (docked, so it can never be pushed off-screen by window size or display scaling)
+$panelSteamBar = New-Object System.Windows.Forms.Panel
+$panelSteamBar.Dock = 'Bottom'
+$panelSteamBar.Height = 104
 
 $chkClose = New-Object System.Windows.Forms.CheckBox
 $chkClose.Text = 'Close the game on my PC when I quit the stream'
 $chkClose.Checked = $true
-$chkClose.Location = New-Object System.Drawing.Point(20, 378)
-$chkClose.Size = New-Object System.Drawing.Size(340, 22)
-$chkClose.Anchor = 'Left,Bottom'
-$tabSteam.Controls.Add($chkClose)
+$chkClose.Location = New-Object System.Drawing.Point(4, 4)
+$chkClose.Size = New-Object System.Drawing.Size(360, 22)
 
 $chkRestartAfter = New-Object System.Windows.Forms.CheckBox
 $chkRestartAfter.Text = 'Restart Apollo after adding (required for the tile to appear; drops any active stream)'
 $chkRestartAfter.Checked = $true
-$chkRestartAfter.Location = New-Object System.Drawing.Point(20, 402)
-$chkRestartAfter.Size = New-Object System.Drawing.Size(560, 22)
-$chkRestartAfter.Anchor = 'Left,Bottom'
-$tabSteam.Controls.Add($chkRestartAfter)
+$chkRestartAfter.Location = New-Object System.Drawing.Point(4, 28)
+$chkRestartAfter.Size = New-Object System.Drawing.Size(620, 22)
 
-$btnScan = New-Button 'Rescan Steam' 20 432 120 30
-$btnScan.Anchor = 'Left,Bottom'
-$btnAddSteam = New-Button 'Add selected game(s) to Moonlight' 150 432 240 30
-$btnAddSteam.Anchor = 'Left,Bottom'
-$lblSteamStatus = New-Label '' 400 437 330 22
-$lblSteamStatus.Anchor = 'Left,Bottom'
-$tabSteam.Controls.AddRange(@($btnScan, $btnAddSteam, $lblSteamStatus))
+$btnAddSteam = New-Button 'Add selected game(s) to Moonlight' 4 58 262 34
+$btnAddSteam.Font = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)
+$btnScan = New-Button 'Rescan Steam' 276 58 120 34
+$lblSteamStatus = New-Label '' 410 66 320 22
+
+$panelSteamBar.Controls.AddRange(@($chkClose, $chkRestartAfter, $btnAddSteam, $btnScan, $lblSteamStatus))
+
+# --- header pinned to the TOP ---
+$lblSteamTitle = New-Label 'Installed Steam games (ones already on Moonlight are greyed out). Click a game in the list, then click the "Add selected game(s) to Moonlight" button below.' 0 0 700 40
+$lblSteamTitle.Dock = 'Top'
+
+# --- the game list FILLS the space in between ---
+$lvGames = New-Object System.Windows.Forms.ListView
+$lvGames.View = 'Details'; $lvGames.FullRowSelect = $true; $lvGames.MultiSelect = $true
+$lvGames.Dock = 'Fill'
+[void]$lvGames.Columns.Add('Game', 420)
+[void]$lvGames.Columns.Add('AppId', 90)
+[void]$lvGames.Columns.Add('On Moonlight?', 150)
+
+# add order for docking: the Fill control FIRST, edge-docked controls LAST
+# (the last-added docked control claims its edge first; Fill takes the remainder)
+$tabSteam.Controls.Add($lvGames)
+$tabSteam.Controls.Add($lblSteamTitle)
+$tabSteam.Controls.Add($panelSteamBar)
 
 $script:steamGames = @()
 $script:scanSteam = {
