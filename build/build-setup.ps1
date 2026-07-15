@@ -95,7 +95,7 @@ Invoke-ps2exe -inputFile $installerPs1 -outputFile $exe `
     -company 'aguirretim' `
     -product 'Apollo Mirror Manager' `
     -copyright 'MIT License' `
-    -version '1.0.0' `
+    -version '1.0.1' `
     -requireAdmin $false `
     -noConfigFile
 
