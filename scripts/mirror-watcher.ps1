@@ -67,6 +67,55 @@ public class DMW {
 }
 "@
 
+# --- virtual-display detection (so we mirror onto Apollo's virtual display, ---
+# --- NOT a real second monitor) ---
+Add-Type @"
+using System; using System.Runtime.InteropServices;
+public class VDD {
+    [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)]
+    public struct DISPLAY_DEVICE {
+        public int cb;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst=32)]  public string DeviceName;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst=128)] public string DeviceString;
+        public int StateFlags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst=128)] public string DeviceID;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst=128)] public string DeviceKey;
+    }
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)]
+    public static extern bool EnumDisplayDevices(string dev, uint num, ref DISPLAY_DEVICE d, uint flags);
+    public static int Size() { return Marshal.SizeOf(typeof(DISPLAY_DEVICE)); }
+}
+"@
+
+# Name fragments that identify a streaming VIRTUAL display. Apollo/Sunshine use
+# the "SudoMaker Virtual Display Adapter" (SudoVDA); the monitor shows up as
+# "Moonlight". Advanced users can force a display by putting a GDI name
+# (e.g. \\.\DISPLAY5) or a name fragment in mirror-display.txt next to this file.
+$VDSignatures = @('sudomaker','virtual display','sudovda','moonlight','sunshine virtual','apollo virtual')
+$OverrideFile = Join-Path $PSScriptRoot 'mirror-display.txt'
+
+function Get-VDName {
+    # returns the \\.\DISPLAYx GDI name of the virtual display, or $null
+    $override = $null
+    if (Test-Path $OverrideFile) { $override = ((Get-Content $OverrideFile -ErrorAction SilentlyContinue | Select-Object -First 1)) }
+    if ($override) { $override = $override.Trim() }
+    $sz = [VDD]::Size()
+    for ($i = 0; ; $i++) {
+        $a = New-Object VDD+DISPLAY_DEVICE; $a.cb = $sz
+        if (-not [VDD]::EnumDisplayDevices([NullString]::Value, [uint32]$i, [ref]$a, 0)) { break }
+        if (-not ($a.StateFlags -band 0x1)) { continue }   # attached to the desktop
+        $m = New-Object VDD+DISPLAY_DEVICE; $m.cb = $sz
+        $hay = $a.DeviceName + ' ' + $a.DeviceString
+        if ([VDD]::EnumDisplayDevices($a.DeviceName, 0, [ref]$m, 0)) { $hay += ' ' + $m.DeviceString + ' ' + $m.DeviceID }
+        if ($override) {
+            if ($hay -match [regex]::Escape($override)) { return $a.DeviceName }
+        } else {
+            foreach ($s in $VDSignatures) { if ($hay -match [regex]::Escape($s)) { return $a.DeviceName } }
+        }
+    }
+    return $null
+}
+
 # Handoff file: each launch script writes the process name(s) of the app it
 # wants mirrored (comma-separated). Lets ONE watcher mirror whichever tile you
 # launched (Palworld, Discord, ...). Falls back to the param default.
@@ -78,7 +127,21 @@ function Get-Targets {
     }
     return $ProcessNames
 }
-function Get-VD { [System.Windows.Forms.Screen]::AllScreens | Where-Object { -not $_.Primary -and $_.Bounds.Width -ge $MinWidth } | Select-Object -First 1 }
+function Get-VD {
+    # Prefer the identified virtual display (SudoMaker/Moonlight) so we never
+    # mirror onto a real second monitor.
+    $name = Get-VDName
+    if ($name) {
+        $scr = [System.Windows.Forms.Screen]::AllScreens | Where-Object { $_.DeviceName -eq $name } | Select-Object -First 1
+        if ($scr) { return $scr }
+    }
+    # Fallback: no recognised virtual display. Only guess when there is exactly
+    # ONE non-primary display (the classic single-extra-display case) - otherwise
+    # return nothing so we don't grab the wrong physical monitor.
+    $others = @([System.Windows.Forms.Screen]::AllScreens | Where-Object { -not $_.Primary -and $_.Bounds.Width -ge $MinWidth })
+    if ($others.Count -eq 1) { return $others[0] }
+    return $null
+}
 function Get-GameHwnd($targets) {
     foreach ($n in $targets) {
         $p = Get-Process -Name $n -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
@@ -119,6 +182,13 @@ function Stop-Mirror($reason) {
     $script:mirroring = $false; $script:curHwnd = [IntPtr]::Zero; $script:curVD = $null
     Log "Mirror stopped ($reason). Back to waiting."
 }
+
+# one-time diagnostics: list displays and which one we'll mirror onto
+Log ("Displays: " + (([System.Windows.Forms.Screen]::AllScreens | ForEach-Object {
+    "{0}{1} {2}x{3}" -f $_.DeviceName, $(if ($_.Primary) { '(primary)' } else { '' }), $_.Bounds.Width, $_.Bounds.Height
+}) -join '  |  '))
+$vdName0 = Get-VDName
+Log ("Virtual display detected: " + $(if ($vdName0) { $vdName0 } else { 'NONE yet (waiting for Apollo virtual display / single-non-primary fallback)' }))
 
 while ($true) {
     try {
