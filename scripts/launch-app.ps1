@@ -14,9 +14,10 @@
 
 param(
     [Parameter(Mandatory=$true)][string]$Name,
-    [Parameter(Mandatory=$true)][string]$ProcessNames,  # comma-separated
+    [string]$ProcessNames = '',  # comma-separated; omit when -Aumid is used
     [string]$LaunchCmd  = '',   # a URI (steam://...) OR an .exe path
     [string]$LaunchArgs = '',   # space-separated args, only for .exe launches
+    [string]$Aumid      = '',   # Xbox / Game Pass / Store app: launch + match by package
     [switch]$CloseOnQuit
 )
 
@@ -27,12 +28,57 @@ function Log($m) { Add-Content -Path $LogFile -Value ("[{0}] {1}" -f (Get-Date).
 
 $names = $ProcessNames -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
 
+# Packaged apps (Xbox / Game Pass / Store) have no dependable exe name and report
+# MainWindowHandle == 0, so they are tracked by PACKAGE IDENTITY instead.
+if ($Aumid) {
+    Add-Type @"
+using System; using System.Text; using System.Runtime.InteropServices;
+public class PkgLite {
+    [DllImport("kernel32.dll")] static extern IntPtr OpenProcess(int a, bool i, uint pid);
+    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode)]
+    static extern int GetApplicationUserModelId(IntPtr p, ref uint len, StringBuilder id);
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode)]
+    static extern int GetPackageFamilyName(IntPtr p, ref uint len, StringBuilder n);
+    public static string IdentityOf(uint pid) {
+        IntPtr h = OpenProcess(0x1000, false, pid);
+        if (h == IntPtr.Zero) return "";
+        try {
+            string a = "", f = "";
+            uint n = 260; StringBuilder sb = new StringBuilder((int)n);
+            if (GetApplicationUserModelId(h, ref n, sb) == 0) a = sb.ToString();
+            n = 260; sb = new StringBuilder((int)n);
+            if (GetPackageFamilyName(h, ref n, sb) == 0) f = sb.ToString();
+            return a + "|" + f;
+        } finally { CloseHandle(h); }
+    }
+}
+"@
+    # The family name is the stable part of an AUMID ("Family!AppId") and is what
+    # every process of the package reports, so match on that.
+    $script:PkgNeedle = ($Aumid -split '!')[0]
+    function Test-PackageRunning {
+        foreach ($p in (Get-Process -ErrorAction SilentlyContinue)) {
+            try {
+                $id = [PkgLite]::IdentityOf([uint32]$p.Id)
+                if ($id -and $id -like "*$script:PkgNeedle*") { return $true }
+            } catch { }
+        }
+        return $false
+    }
+}
+
 # 1. Tell the mirror watcher which window to copy this session.
-Set-Content -Path (Join-Path $root 'mirror-target.txt') -Value ($names -join ',') -Encoding ascii
+$targetLine = if ($Aumid) { "package:$PkgNeedle" } else { $names -join ',' }
+Set-Content -Path (Join-Path $root 'mirror-target.txt') -Value $targetLine -Encoding ascii
 
 # 2. Already running? -> mirror-only, never relaunch.
 $running = $false
-foreach ($n in $names) { if (Get-Process -Name $n -ErrorAction SilentlyContinue) { $running = $true; break } }
+if ($Aumid) {
+    $running = Test-PackageRunning
+} else {
+    foreach ($n in $names) { if (Get-Process -Name $n -ErrorAction SilentlyContinue) { $running = $true; break } }
+}
 
 $marker = Join-Path $root ("{0}.owned.flag" -f $safe)
 if ($running) {
@@ -44,7 +90,11 @@ if ($running) {
     } else {
         Log "$Name not running -> launching (will NOT close on quit)."
     }
-    if ($LaunchCmd -match '://') {
+    if ($Aumid) {
+        # Store/Xbox apps are not launchable by exe path; go through the shell.
+        Start-Process explorer.exe -ArgumentList ("shell:appsFolder\{0}" -f $Aumid)
+        Log "Launched packaged app via AUMID $Aumid"
+    } elseif ($LaunchCmd -match '://') {
         Start-Process $LaunchCmd                                   # protocol/URI (e.g. steam://)
     } elseif ($LaunchCmd) {
         if ($LaunchArgs) { Start-Process -FilePath $LaunchCmd -ArgumentList ($LaunchArgs -split ' ') }

@@ -118,9 +118,27 @@ Lists **every installed Steam game** across all your Steam library drives, and m
 - wires up **idempotent launch** (connecting while the game is already running just mirrors it — never relaunches) and, if the checkbox is on, **close-on-quit** (quitting the stream closes the game *only if the stream launched it* — if you were already playing on your PC, it leaves it alone),
 - restarts Apollo so the tile appears (uncheck that box if you're mid-stream and want to apply later).
 
+### Add Xbox game tab
+
+![Add Xbox game tab](docs/add-xbox-game.png)
+
+Lists your installed **Xbox / Game Pass / Microsoft Store** games, marks the ones already on Moonlight, and adds them the same way the Steam tab does. Tick **Show all Store apps** if a title is missing — some Game Pass games ship under obfuscated package names (Forza Horizon 5 registers as `Microsoft.624F8B84B80`), so the default filter can be too aggressive. The Xbox app itself can be added too; uncheck close-on-quit for it.
+
+Store games need a completely different approach from Steam games, and it's worth knowing why:
+
+| | Steam game | Xbox / Game Pass game |
+|---|---|---|
+| Launch | `steam://rungameid/<id>` | `explorer.exe shell:appsFolder\<AUMID>` |
+| Find the window by | process name | **package identity** |
+| Cover art | Steam CDN | generated from the app's shell icon |
+
+The reason for the middle row: packaged apps report `Process.MainWindowHandle == 0`, and for XAML apps the frame belongs to `ApplicationFrameHost.exe`, so the usual "find the process, take its main window" approach finds nothing. Instead the watcher enumerates real top-level windows, resolves each owner's **Application User Model ID / package family name** via `GetApplicationUserModelId`, and matches on that. Nothing needs to know the game's exe name — which is just as well, because `C:\Program Files\WindowsApps` is ACL-locked even for administrators, so the exe-scanning trick used for Steam games cannot work there.
+
+That same lock is why cover art is generated rather than extracted: the package's own tile assets are unreadable, and the shell will only hand back a small icon (~40×40 for most Game Pass titles). Blowing that up looks broken, so the icon is used as a badge on a clean typographic tile instead. If you want proper box art, drop a 600×900 PNG into `covers\<Game_Name>.png` and it will be used.
+
 ### Add other app tab
 
-For anything that isn't a Steam game: Discord, an emulator, a launcher, any .exe. Click **Browse**, pick the program, and the name/process fields auto-fill. For always-on apps like Discord, **uncheck** "Close the app on my PC when I quit the stream" so quitting the stream never kills it.
+For anything that isn't a Steam or Xbox game: Discord, an emulator, a launcher, any .exe. Click **Browse**, pick the program, and the name/process fields auto-fill. For always-on apps like Discord, **uncheck** "Close the app on my PC when I quit the stream" so quitting the stream never kills it.
 
 ### Manage tiles tab
 

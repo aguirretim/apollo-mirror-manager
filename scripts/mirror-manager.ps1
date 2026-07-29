@@ -390,7 +390,121 @@ $btnAddSteam.Add_Click({
     [System.Windows.Forms.MessageBox]::Show(($results -join "`r`n"), 'Add Steam game') | Out-Null
 })
 
-# ---------------------------- TAB 3: Add other app ----------------------------
+# -------------------------- TAB 3: Add Xbox game ----------------------------
+# Xbox / Game Pass / Store titles need a different path from Steam: they launch
+# by AUMID through the shell, their install folder is ACL-locked so exe names
+# cannot be scanned, and they report MainWindowHandle == 0 - so the tile matches
+# the game window by PACKAGE IDENTITY instead. add-xbox-app.ps1 handles all of it.
+$tabXbox = New-Object System.Windows.Forms.TabPage
+$tabXbox.Text = 'Add Xbox game'
+$tabs.TabPages.Add($tabXbox)
+$tabXbox.Padding = New-Object System.Windows.Forms.Padding(12, 10, 12, 8)
+
+$panelXboxBar = New-Object System.Windows.Forms.Panel
+$panelXboxBar.Dock = 'Bottom'
+$panelXboxBar.Height = 104
+
+$chkXboxClose = New-Object System.Windows.Forms.CheckBox
+$chkXboxClose.Text = 'Close the game on my PC when I quit the stream'
+$chkXboxClose.Checked = $true
+$chkXboxClose.Location = New-Object System.Drawing.Point(4, 4)
+$chkXboxClose.Size = New-Object System.Drawing.Size(360, 22)
+
+$chkXboxRestart = New-Object System.Windows.Forms.CheckBox
+$chkXboxRestart.Text = 'Restart Apollo after adding (required for the tile to appear; drops any active stream)'
+$chkXboxRestart.Checked = $true
+$chkXboxRestart.Location = New-Object System.Drawing.Point(4, 28)
+$chkXboxRestart.Size = New-Object System.Drawing.Size(620, 22)
+
+$btnAddXbox  = New-Button 'Add selected game(s) to Moonlight' 4 58 262 34
+$btnAddXbox.Font = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)
+$btnScanXbox = New-Button 'Rescan Xbox' 276 58 120 34
+$chkXboxAll  = New-Object System.Windows.Forms.CheckBox
+$chkXboxAll.Text = 'Show all Store apps'
+$chkXboxAll.Location = New-Object System.Drawing.Point(406, 66)
+$chkXboxAll.Size = New-Object System.Drawing.Size(150, 22)
+$lblXboxStatus = New-Label '' 566 66 300 22
+
+$panelXboxBar.Controls.AddRange(@($chkXboxClose, $chkXboxRestart, $btnAddXbox, $btnScanXbox, $chkXboxAll, $lblXboxStatus))
+
+$lblXboxTitle = New-Label 'Installed Xbox / Game Pass games (ones already on Moonlight are greyed out). Select one or more, then click "Add selected game(s) to Moonlight". Tick "Show all Store apps" if something is missing.' 0 0 700 40
+$lblXboxTitle.Dock = 'Top'
+
+$lvXbox = New-Object System.Windows.Forms.ListView
+$lvXbox.View = 'Details'; $lvXbox.FullRowSelect = $true; $lvXbox.MultiSelect = $true
+$lvXbox.Dock = 'Fill'
+[void]$lvXbox.Columns.Add('Game', 260)
+[void]$lvXbox.Columns.Add('Package (AUMID)', 400)
+[void]$lvXbox.Columns.Add('On Moonlight?', 110)
+
+$tabXbox.Controls.Add($lvXbox)
+$tabXbox.Controls.Add($lblXboxTitle)
+$tabXbox.Controls.Add($panelXboxBar)
+
+function Get-XboxApps {
+    param([bool]$All = $false)
+    $p = @{ List = $true; AsObject = $true }
+    if ($All) { $p.IncludeAllStoreApps = $true }
+    try { & (Join-Path $Root 'add-xbox-app.ps1') @p | Where-Object { $_.Aumid } } catch { @() }
+}
+function Add-XboxTile {
+    param([string]$Name, [string]$Aumid, [bool]$CloseOnQuit = $true)
+    $params = @{ Name = $Name; Aumid = $Aumid }
+    if (-not $CloseOnQuit) { $params.NoCloseOnQuit = $true }
+    try {
+        & (Join-Path $Root 'add-xbox-app.ps1') @params *>&1 | Out-Null
+        return "OK: added '$Name'"
+    } catch {
+        return "FAILED: '$Name' - $($_.Exception.Message)"
+    }
+}
+
+$script:scanXbox = {
+    $lblXboxStatus.Text = 'Scanning...'
+    $form.Refresh()
+    $tileNames = @((Get-ApolloTiles).name)
+    $apps = @(Get-XboxApps -All $chkXboxAll.Checked)
+    $lvXbox.Items.Clear()
+    foreach ($a in ($apps | Sort-Object Name)) {
+        $added = $tileNames -contains $a.Name
+        $item = New-Object System.Windows.Forms.ListViewItem($a.Name)
+        [void]$item.SubItems.Add($a.Aumid)
+        [void]$item.SubItems.Add($(if ($added) { 'Yes' } else { '' }))
+        $item.Tag = $a
+        if ($added) { $item.ForeColor = [System.Drawing.Color]::Gray }
+        [void]$lvXbox.Items.Add($item)
+    }
+    $lblXboxStatus.Text = "$($apps.Count) found"
+}
+$btnScanXbox.Add_Click({ & $script:scanXbox })
+$chkXboxAll.Add_CheckedChanged({ & $script:scanXbox })
+
+$btnAddXbox.Add_Click({
+    $sel = @($lvXbox.SelectedItems | Where-Object { $_.SubItems[2].Text -ne 'Yes' })
+    if (-not $sel) {
+        [System.Windows.Forms.MessageBox]::Show('Select at least one game that is not already on Moonlight.', 'Add Xbox game') | Out-Null
+        return
+    }
+    $results = @()
+    foreach ($item in $sel) {
+        $a = $item.Tag
+        $lblXboxStatus.Text = "Adding $($a.Name)..."
+        $form.Refresh()
+        $results += Add-XboxTile -Name $a.Name -Aumid $a.Aumid -CloseOnQuit $chkXboxClose.Checked
+    }
+    if ($chkXboxRestart.Checked) {
+        $lblXboxStatus.Text = 'Restarting Apollo...'
+        $form.Refresh()
+        try { Restart-Apollo; $results += 'Apollo restarted - tile(s) are live.' }
+        catch { $results += "Apollo restart FAILED: $($_.Exception.Message)" }
+    } else {
+        $results += 'NOTE: tile(s) appear only after Apollo restarts (Health tab button).'
+    }
+    & $script:scanXbox
+    [System.Windows.Forms.MessageBox]::Show(($results -join "`r`n"), 'Add Xbox game') | Out-Null
+})
+
+# ---------------------------- TAB 4: Add other app ----------------------------
 $tabOther = New-Object System.Windows.Forms.TabPage
 $tabOther.Text = 'Add other app'
 $tabs.TabPages.Add($tabOther)
@@ -501,6 +615,7 @@ $form.Add_Shown({
     & $script:refreshHealth
     & $script:reloadTiles
     & $script:scanSteam
+    & $script:scanXbox
 })
 if ($Screenshot) {
     # -Screenshot <outDir>: render each tab and save a PNG (used for the README)
@@ -509,7 +624,7 @@ if ($Screenshot) {
     [System.Windows.Forms.Application]::DoEvents()
     Start-Sleep -Milliseconds 800
     [System.Windows.Forms.Application]::DoEvents()
-    $tabNames = @('health','add-steam-game','add-other-app','manage-tiles')
+    $tabNames = @('health','add-steam-game','add-xbox-game','add-other-app','manage-tiles')
     for ($i = 0; $i -lt $tabs.TabPages.Count; $i++) {
         $tabs.SelectedIndex = $i
         [System.Windows.Forms.Application]::DoEvents()
@@ -528,7 +643,7 @@ if ($Screenshot) {
     $deadline = (Get-Date).AddSeconds(5)
     while ((Get-Date) -lt $deadline) { [System.Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 100 }
     $form.Close()
-    Write-Output "GUI OK - built and rendered all 4 tabs without error"
+    Write-Output "GUI OK - built and rendered all $($tabs.TabPages.Count) tabs without error"
 } else {
     [void]$form.ShowDialog()
 }

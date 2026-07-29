@@ -116,9 +116,101 @@ function Get-VDName {
     return $null
 }
 
+# --- packaged-app (MSIX / Xbox Game Pass) window resolution -----------------
+# Store-packaged games do NOT reliably expose their window through
+# Process.MainWindowHandle (it reads 0, and for XAML apps the frame belongs to
+# ApplicationFrameHost.exe). So for these tiles we identify the window by the
+# owning process's PACKAGE IDENTITY instead of by process name: enumerate real
+# top-level windows, resolve each owner's Application User Model ID / package
+# family name, and match. Nothing has to know the game's exe name.
+Add-Type @"
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public class PKG {
+    delegate bool EnumProc(IntPtr h, IntPtr p);
+    [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc cb, IntPtr p);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+    [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
+    [DllImport("user32.dll")] static extern int  GetWindowTextLengthW(IntPtr h);
+    [DllImport("user32.dll")] static extern int  GetWindowLongW(IntPtr h, int i);
+    [DllImport("user32.dll")] static extern bool GetClientRect(IntPtr h, out RECT r);
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+    [DllImport("kernel32.dll")] static extern IntPtr OpenProcess(int a, bool inh, uint pid);
+    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode)]
+    static extern int GetApplicationUserModelId(IntPtr proc, ref uint len, StringBuilder id);
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode)]
+    static extern int GetPackageFamilyName(IntPtr proc, ref uint len, StringBuilder name);
+
+    [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L,T,R,B; }
+    const int GWL_EXSTYLE = -20;
+    const int WS_EX_TOOLWINDOW = 0x00000080;
+    const int PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+
+    // Package identity of a process, as "AUMID|PackageFamilyName". Empty if unpackaged.
+    public static string IdentityOf(uint pid) {
+        IntPtr h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+        if (h == IntPtr.Zero) return "";
+        try {
+            string aumid = "", fam = "";
+            uint n = 260; StringBuilder sb = new StringBuilder((int)n);
+            if (GetApplicationUserModelId(h, ref n, sb) == 0) aumid = sb.ToString();
+            n = 260; sb = new StringBuilder((int)n);
+            if (GetPackageFamilyName(h, ref n, sb) == 0) fam = sb.ToString();
+            if (aumid.Length == 0 && fam.Length == 0) return "";
+            return aumid + "|" + fam;
+        } finally { CloseHandle(h); }
+    }
+
+    static bool IsRealWindow(IntPtr h) {
+        if (!IsWindowVisible(h) || IsIconic(h)) return false;
+        if (GetWindowTextLengthW(h) == 0) return false;
+        if ((GetWindowLongW(h, GWL_EXSTYLE) & WS_EX_TOOLWINDOW) != 0) return false;
+        RECT r; if (!GetClientRect(h, out r)) return false;
+        return (r.R - r.L) >= 320 && (r.B - r.T) >= 240;   // ignore tiny helper windows
+    }
+
+    // Largest real top-level window whose owner's package identity contains 'needle'.
+    // ApplicationFrameHost windows are skipped so we mirror the game's own surface.
+    public static IntPtr FindByPackage(string needle) {
+        IntPtr best = IntPtr.Zero; long bestArea = 0;
+        EnumWindows(delegate(IntPtr h, IntPtr p) {
+            if (!IsRealWindow(h)) return true;
+            uint pid; GetWindowThreadProcessId(h, out pid);
+            string id = IdentityOf(pid);
+            if (id.Length == 0) return true;
+            if (id.IndexOf(needle, StringComparison.OrdinalIgnoreCase) < 0) return true;
+            RECT r; GetClientRect(h, out r);
+            long area = (long)(r.R - r.L) * (r.B - r.T);
+            if (area > bestArea) { bestArea = area; best = h; }
+            return true;
+        }, IntPtr.Zero);
+        return best;
+    }
+
+    // Largest real top-level window owned by a specific process id.
+    public static IntPtr FindByPid(uint want) {
+        IntPtr best = IntPtr.Zero; long bestArea = 0;
+        EnumWindows(delegate(IntPtr h, IntPtr p) {
+            if (!IsRealWindow(h)) return true;
+            uint pid; GetWindowThreadProcessId(h, out pid);
+            if (pid != want) return true;
+            RECT r; GetClientRect(h, out r);
+            long area = (long)(r.R - r.L) * (r.B - r.T);
+            if (area > bestArea) { bestArea = area; best = h; }
+            return true;
+        }, IntPtr.Zero);
+        return best;
+    }
+}
+"@
+
 # Handoff file: each launch script writes the process name(s) of the app it
 # wants mirrored (comma-separated). Lets ONE watcher mirror whichever tile you
 # launched (Palworld, Discord, ...). Falls back to the param default.
+# A line of the form "package:<AUMID-or-family-name>" selects the packaged-app
+# path above instead of process-name matching (used by Xbox / Game Pass tiles).
 $TargetFile = Join-Path $PSScriptRoot 'mirror-target.txt'
 function Get-Targets {
     if (Test-Path $TargetFile) {
@@ -144,8 +236,24 @@ function Get-VD {
 }
 function Get-GameHwnd($targets) {
     foreach ($n in $targets) {
+        # --- packaged app (Xbox / Game Pass / Store): match by package identity ---
+        if ($n -match '^(?:package|aumid):(.+)$') {
+            $needle = $Matches[1].Trim()
+            if ($needle) {
+                $h = [PKG]::FindByPackage($needle)
+                if ($h -ne [IntPtr]::Zero) { return $h }
+            }
+            continue
+        }
+        # --- normal Win32 app: MainWindowHandle is the fast path ---
         $p = Get-Process -Name $n -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
         if ($p) { return $p.MainWindowHandle }
+        # Fallback: some apps (packaged, XAML-hosted, or mid-startup) report
+        # MainWindowHandle == 0 while owning a perfectly good top-level window.
+        foreach ($proc in (Get-Process -Name $n -ErrorAction SilentlyContinue)) {
+            $h = [PKG]::FindByPid([uint32]$proc.Id)
+            if ($h -ne [IntPtr]::Zero) { return $h }
+        }
     }
     return [IntPtr]::Zero
 }
