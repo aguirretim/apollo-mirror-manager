@@ -134,7 +134,9 @@ Store games need a completely different approach from Steam games, and it's wort
 
 The reason for the middle row: packaged apps report `Process.MainWindowHandle == 0`, and for XAML apps the frame belongs to `ApplicationFrameHost.exe`, so the usual "find the process, take its main window" approach finds nothing. Instead the watcher enumerates real top-level windows, resolves each owner's **Application User Model ID / package family name** via `GetApplicationUserModelId`, and matches on that. Nothing needs to know the game's exe name — which is just as well, because `C:\Program Files\WindowsApps` is ACL-locked even for administrators, so the exe-scanning trick used for Steam games cannot work there.
 
-That same lock is why cover art is generated rather than extracted: the package's own tile assets are unreadable, and the shell will only hand back a small icon (~40×40 for most Game Pass titles). Blowing that up looks broken, so the icon is used as a badge on a clean typographic tile instead. If you want proper box art, drop a 600×900 PNG into `covers\<Game_Name>.png` and it will be used.
+Cover art comes from **Microsoft's public Store catalog** (`displaycatalog.mp.microsoft.com`, looked up by package family name — no API key, no account). Most titles publish a `Poster` at 1440×2160, an exact 2:3 match for the 600×900 tile, so you get real box art.
+
+If a title has no catalog entry, it falls back to a generated tile using the app's shell icon as a badge — necessary because the package's own artwork sits behind the same WindowsApps ACL and the shell will only return a ~40×40 icon, which looks broken when upscaled. To override any tile, drop a 600×900 PNG at `covers\<Game_Name>.png`.
 
 ### Add other app tab
 

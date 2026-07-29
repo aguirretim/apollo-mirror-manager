@@ -100,6 +100,61 @@ public class ShellArt {
 }
 "@
 
+# --------------------------------------------------------------------------
+# Real box art, straight from Microsoft's public Store catalog. This is far
+# better than anything reachable locally: the package's own assets are behind
+# the WindowsApps ACL, and the shell will only return a ~40x40 icon. The
+# catalog can be looked up by package family name with no API key, and most
+# titles publish a "Poster" at 1440x2160 - an exact 2:3 match for a 600x900
+# tile. Falls back to the generated tile if the lookup fails (offline, or a
+# title with no catalog entry).
+# --------------------------------------------------------------------------
+function Get-StoreArtUrl {
+    param([string]$Pfn)
+    $url = "https://displaycatalog.mp.microsoft.com/v7.0/products/lookup" +
+           "?alternateId=PackageFamilyName&value=$Pfn&market=US&languages=en-us&fieldsTemplate=Details"
+    try { $r = Invoke-RestMethod -Uri $url -TimeoutSec 25 -ErrorAction Stop } catch { return $null }
+    $imgs = $r.Products[0].LocalizedProperties[0].Images
+    if (-not $imgs) { return $null }
+    # Preference order: portrait first (matches the tile), then square, then wide.
+    foreach ($purpose in 'Poster','BrandedKeyArt','BoxArt','FeaturePromotionalSquareArt','TitledHeroArt','SuperHeroArt') {
+        $pick = $imgs | Where-Object { $_.ImagePurpose -eq $purpose } |
+                Sort-Object { [int]$_.Height * [int]$_.Width } -Descending | Select-Object -First 1
+        if ($pick) {
+            $u = $pick.Uri
+            if ($u -like '//*') { $u = 'https:' + $u }   # catalog returns protocol-relative URIs
+            return $u
+        }
+    }
+    return $null
+}
+
+function New-CoverFromStore {
+    param([string]$Pfn, [string]$OutFile)
+    $u = Get-StoreArtUrl -Pfn $Pfn
+    if (-not $u) { return $null }
+    $tmp = [System.IO.Path]::GetTempFileName()
+    try {
+        Invoke-WebRequest -Uri $u -OutFile $tmp -UseBasicParsing -TimeoutSec 30 -ErrorAction Stop
+        $src = [System.Drawing.Image]::FromFile($tmp)
+        $W = 600; $H = 900
+        $bmp = New-Object System.Drawing.Bitmap $W, $H
+        $g = [System.Drawing.Graphics]::FromImage($bmp)
+        $g.InterpolationMode = 'HighQualityBicubic'
+        $g.PixelOffsetMode   = 'HighQuality'
+        # cover-fit: scale so the art fills the tile, centre-crop the overflow
+        $scale = [Math]::Max($W / $src.Width, $H / $src.Height)
+        $dw = [int][Math]::Ceiling($src.Width * $scale)
+        $dh = [int][Math]::Ceiling($src.Height * $scale)
+        $g.DrawImage($src, [int](($W - $dw)/2), [int](($H - $dh)/2), $dw, $dh)
+        $g.Dispose(); $src.Dispose()
+        $bmp.Save($OutFile, [System.Drawing.Imaging.ImageFormat]::Png)
+        $bmp.Dispose()
+        return $OutFile
+    } catch { return $null }
+    finally { Remove-Item $tmp -ErrorAction SilentlyContinue }
+}
+
 function New-CoverPng {
     param([string]$Aumid, [string]$Title, [string]$OutFile)
     # 600x900 portrait to match the Steam covers already in use.
@@ -252,8 +307,16 @@ if (-not $ImagePath) {
     $coversDir = Join-Path $ScriptRoot 'covers'
     New-Item -ItemType Directory -Force -Path $coversDir | Out-Null
     $png = Join-Path $coversDir "$safe.png"
-    try   { $ImagePath = New-CoverPng -Aumid $Aumid -Title $Name -OutFile $png; Write-Host "Cover generated -> $png" }
-    catch { Write-Warning "Could not build cover art: $($_.Exception.Message)" }
+    $pfn = ($Aumid -split '!')[0]
+    # 1st choice: real box art from the Microsoft Store catalog.
+    $ImagePath = New-CoverFromStore -Pfn $pfn -OutFile $png
+    if ($ImagePath) { Write-Host "Cover: Store box art -> $png" }
+    else {
+        # 2nd choice: generated tile using the shell icon as a badge.
+        try   { $ImagePath = New-CoverPng -Aumid $Aumid -Title $Name -OutFile $png
+                Write-Host "Cover: no Store art found; generated tile -> $png" }
+        catch { Write-Warning "Could not build cover art: $($_.Exception.Message)" }
+    }
 }
 
 # --- build the tile's commands ---------------------------------------------
